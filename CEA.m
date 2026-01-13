@@ -1,9 +1,10 @@
-function [Best,Data0] = CEA(Data,BU,BD,problem_name)
+function [Best,Data0] = CEA(Data,BU,BD,problem_name, progressFileID, decompFileID)
+
 
 dim = size(Data,2)-1;
 num0 = size(Data,1);
-pc=1.0;  %Crossover Probability ½»²æ¸ÅÂÊ
-pm=1/dim;  %Mutation Probability ±äÒì¸ÅÂÊ
+pc=1.0;  %Crossover Probability ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+pm=1/dim;  %Mutation Probability ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 bu = BU;  bd = BD;
 % T = 100;
 % K = ceil(T*0.1);
@@ -17,22 +18,44 @@ fes = num0;
 Data0 = Data;
 
 while fes <= FEs
-    fprintf('µ±Ç°º¯Êý¼ÆËã: fes = %d ´Î\n', fes);
+    
     Data = Data_Process(Data0,num0);
     num = size(Data,1);
     Best = min(Data(:,dim+1));
     Cr = KRCC(Data,num,dim);
+    % ---- progress log (CSV): Evaluations,Best_Value ----
+    if progressFileID > 0
+        fprintf(progressFileID, '%d,%.15g\n', fes, Best);
+    end
+    
+    % ---- decomposition log (text) ----
+    if decompFileID > 0
+        [~, order] = sort(Cr, 'descend');
+        topk = min(20, numel(order));
+        fprintf(decompFileID, '\n[fes=%d] Best=%.15g\n', fes, Best);
+        fprintf(decompFileID, 'Top-%d vars by |KRCC| (index:score):\n', topk);
+        for t = 1:topk
+            fprintf(decompFileID, '  %d: %.6g\n', order(t), Cr(order(t)));
+        end
+    end
+
     [Model,Sind,Xind,Train,Test,W,B,C,P] = Low_dim_RBF(Data,num,dim,Cr,T);
     [Ens,Mind,Sim] = Selective_Ensemble(Model,Data,Train,Test,K,W,B,C,P);
     
     [X,Y] = Sur_Coevolution(Data,Ens,Train,Xind,Mind,Sim,bu,bd,N,gmax,W,B,C,P);
     new = Infill_solution_Selection(Data,[X,Y],l);
-    
+    fprintf('ï¿½]ï¿½ï¿½ï¿½ï¿½: fes = %d %d \n', fes, Best);
     if ~isempty(new)
-        newY = compute_objective(new(:,1:end-1),dim,problem_name);
-        Data0 = [ Data0;[new(:,1:end-1),newY] ];
+        newY = compute_objective(new(:,1:end-1), dim, problem_name);
+        Data0 = [Data0; [new(:,1:end-1), newY]];
         fes = fes + length(newY);
+    else
+        if decompFileID > 0
+            fprintf(decompFileID, '[fes=%d] WARNING: new is empty -> stop to avoid infinite loop.\n', fes);
+        end
+        break;
     end
+
     
 end  %%end while
 Best = min(Data0(:,dim+1));
@@ -88,11 +111,11 @@ end
 % rng('shuffle');
 % k = randperm(length(Ens),1);
 % model = Ens{k};  xind = Xind{Mind(k)};
-% ldim = length(xind);  %¸¨Öú×ÓËÑË÷µÄÎ¬Êý
+% ldim = length(xind);  %ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Î¬ï¿½
 % train = Train{Mind(k)};
-% X = initialize_pop(N,dim,bu,bd); %³õÊ¼»¯¸¨ÖúËÑË÷µÄ³õÊ¼ÖÖÈºaX
+% X = initialize_pop(N,dim,bu,bd); %ï¿½ï¿½Ê¼ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ä³ï¿½Ê¼ï¿½ï¿½ÈºaX
 % Y = Ens_predictor(X,Ens,Train,Xind,Mind,Sim);
-% aX = initialize_pop(N,ldim,bu(:,xind),bd(:,xind)); %³õÊ¼»¯¸¨ÖúËÑË÷µÄ³õÊ¼ÖÖÈºaX
+% aX = initialize_pop(N,ldim,bu(:,xind),bd(:,xind)); %ï¿½ï¿½Ê¼ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ä³ï¿½Ê¼ï¿½ï¿½ÈºaX
 % aY = rbfpredict(model,train(:,1:end-1),aX);
 % g = 0;
 % while g <= 500
@@ -113,9 +136,9 @@ end
 %     %     Y = [Y;y];
 %     %     Y = Ens_predictor(X,Ens,Train,Xind,Mind);
 %     %     aY = rbfpredict(model,train(:,1:end-1),aX);
-%     [sY,is1] = sort(Y);  %ÊÊÓ¦ÖµÅÅÐò
+%     [sY,is1] = sort(Y);  %ï¿½ï¿½Ó¦Öµï¿½ï¿½ï¿½
 %     [saY,is2] = sort(aY);
-%     X = X(is1(1:N),:);  %Ñ¡ÔñÇ°N¸ö
+%     X = X(is1(1:N),:);  %Ñ¡ï¿½ï¿½Ç°Nï¿½
 %     Y = Y(is1(1:N),1);
 %     aX = aX(is2(1:N),:);
 %     aY = aY(is2(1:N),1);
