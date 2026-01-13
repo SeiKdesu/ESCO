@@ -1,66 +1,104 @@
 function [Best,Data0] = CEA(Data,BU,BD,problem_name, progressFileID, decompFileID)
 
+if nargin < 5 || isempty(progressFileID)
+    progressFileID = -1;
+end
+if nargin < 6 || isempty(decompFileID)
+    decompFileID = -1;
+end
 
 dim = size(Data,2)-1;
 num0 = size(Data,1);
-pc=1.0;  %Crossover Probability �������
-pm=1/dim;  %Mutation Probability ��������
-bu = BU;  bd = BD;
-% T = 100;
-% K = ceil(T*0.1);
-T = 10;
-K = ceil(T*0.3);  
-l = sqrt(0.001^2*dim);
-N = 50;
-gmax = 20; %100;
+pc = 1.0;
+pm = 1/dim;
+bu = BU;
+bd = BD;
+
+max_group_size = 500;
+rdg3_epsilon_n = max_group_size;
+rdg3_epsilon_s = max_group_size;
+
+l = sqrt(0.001^2 * dim);
+N = 20;
+gmax = 20;
 FEs = 1000;
-fes = num0;
+
+[pipeline_groups, pipeline_evals] = pipeline_groups_for_problem(problem_name, dim, bd(1), bu(1));
+
+
+fes = 400 + pipeline_evals;
 Data0 = Data;
 
+precomputed_groups = {};
+Cr_fixed = [];
+
+if ~isempty(pipeline_groups)
+    if numel(pipeline_groups) == 1 && numel(pipeline_groups{1}) == dim && dim > max_group_size
+        base = pipeline_groups{1};
+        pipeline_groups = split_group_by_size(base, max_group_size);
+    end
+    precomputed_groups = pipeline_groups;
+else
+    X_data = Data0(:,1:dim);
+    y_data = Data0(:,dim+1);
+    Cr_fixed = compute_cr_from_DIG(X_data, y_data, 5, 0.02);
+    precomputed_groups = split_dims_by_cr(Cr_fixed, dim, max_group_size);
+end
+
+if ~isempty(precomputed_groups)
+    T = numel(precomputed_groups);
+else
+    T = ceil(dim / max_group_size);
+end
+if T < 1
+    T = 1;
+end
+K = ceil(T * 0.3);
+
 while fes <= FEs
-    
-    Data = Data_Process(Data0,num0);
+
+    Data = Data_Process(Data0, num0);
     num = size(Data,1);
     Best = min(Data(:,dim+1));
-    Cr = KRCC(Data,num,dim);
-    % ---- progress log (CSV): Evaluations,Best_Value ----
+
     if progressFileID > 0
         fprintf(progressFileID, '%d,%.15g\n', fes, Best);
     end
-    
-    % ---- decomposition log (text) ----
+
     if decompFileID > 0
-        [~, order] = sort(Cr, 'descend');
-        topk = min(20, numel(order));
         fprintf(decompFileID, '\n[fes=%d] Best=%.15g\n', fes, Best);
-        fprintf(decompFileID, 'Top-%d vars by |KRCC| (index:score):\n', topk);
-        for t = 1:topk
-            fprintf(decompFileID, '  %d: %.6g\n', order(t), Cr(order(t)));
+        if ~isempty(pipeline_groups)
+            fprintf(decompFileID, 'Pipeline groups (count=%d):\n', numel(precomputed_groups));
+            for g = 1:numel(precomputed_groups)
+                grp = precomputed_groups{g};
+                fprintf(decompFileID, '  g%d: [%d..%d] size=%d\n', g, grp(1), grp(end), numel(grp));
+            end
+        else
+            [~, order] = sort(Cr_fixed, 'descend');
+            topk = min(20, numel(order));
+            fprintf(decompFileID, 'Top-%d vars by |DIG| (index:score):\n', topk);
+            for t = 1:topk
+                fprintf(decompFileID, '  %d: %.6g\n', order(t), Cr_fixed(order(t)));
+            end
         end
     end
 
-    [Model,Sind,Xind,Train,Test,W,B,C,P] = Low_dim_RBF(Data,num,dim,Cr,T);
+    [Model,Sind,Xind,Train,Test,W,B,C,P] = Low_dim_RBF(Data,num,dim,Cr_fixed,T,max_group_size,precomputed_groups);
     [Ens,Mind,Sim] = Selective_Ensemble(Model,Data,Train,Test,K,W,B,C,P);
-    
+
     [X,Y] = Sur_Coevolution(Data,Ens,Train,Xind,Mind,Sim,bu,bd,N,gmax,W,B,C,P);
     new = Infill_solution_Selection(Data,[X,Y],l);
-    fprintf('�]����: fes = %d %d \n', fes, Best);
+    fprintf('Progress: fes = %d best = %.15g\n', fes, Best);
     if ~isempty(new)
         newY = compute_objective(new(:,1:end-1), dim, problem_name);
         Data0 = [Data0; [new(:,1:end-1), newY]];
         fes = fes + length(newY);
-    else
-        if decompFileID > 0
-            fprintf(decompFileID, '[fes=%d] WARNING: new is empty -> stop to avoid infinite loop.\n', fes);
-        end
-        break;
     end
 
-    
-end  %%end while
+end
 Best = min(Data0(:,dim+1));
 
-end  %%end function
+end
 
 function Data = Data_Process(Data,num0)
 num = size(Data,1);
@@ -70,82 +108,231 @@ if num > num0+400
     Data(ind(c:end),:) = [];
 end
 end
-function Cr = KRCC(S,n,d)
 
-X = S(:,1:d);
-Y = S(:,d+1);
-corr = zeros(1,d);
+function func_id = parse_cec2013_func_id(problem_name)
+    func_id = [];
+    if isempty(problem_name)
+        return;
+    end
+    if isnumeric(problem_name)
+        func_id = double(problem_name);
+        return;
+    end
+    lower_name = lower(char(problem_name));
+    if ~startsWith(lower_name, 'cec2013_')
+        return;
+    end
+    suffix = lower_name(numel('cec2013_')+1:end);
+    if startsWith(suffix, 'f')
+        suffix = suffix(2:end);
+    end
+    if all(isstrprop(suffix, 'digit'))
+        func_id = str2double(suffix);
+    end
+end
 
-for i = 1 : d
-    nc = 0; nd = 0;
-    for j = 1 : n
-        for k = j+1 : n
-            if X(j,i) > X(k,i) && Y(j,1) > Y(k,1) || X(j,i) < X(k,i) && Y(j,1) < Y(k,1)
-                nc = nc + 1;
-            else
-                nd = nd + 1;
+function groups = expand_range_groups(range_groups, dim)
+    if isempty(range_groups)
+        groups = {};
+        return;
+    end
+    groups = cell(size(range_groups,1), 1);
+    seen = false(1, dim);
+    for i = 1:size(range_groups,1)
+        l = double(range_groups(i,1));
+        r = double(range_groups(i,2));
+        if l < 0 || r >= dim || l > r
+            error('invalid group range');
+        end
+        idx = (l:r) + 1;
+        if any(seen(idx))
+            error('overlapping group range');
+        end
+        seen(idx) = true;
+        groups{i} = idx;
+    end
+    if ~all(seen)
+        missing = find(~seen);
+        miss_preview = missing(1:min(10, numel(missing)));
+        error('group coverage mismatch: missing %s', mat2str(miss_preview));
+    end
+end
+
+function [groups, eval_used] = pipeline_groups_for_problem(problem_name, dim, lb, ub)
+    groups = {};
+    eval_used = 0;
+    func_id = parse_cec2013_func_id(problem_name);
+    if isempty(func_id)
+        return;
+    end
+    rng_state = rng;
+    cleanup = onCleanup(@() rng(rng_state));
+    try
+        info = pipeline_rbf_rdg3_true_verify.configure_pipeline('func_id', func_id, 'dim', dim, 'lb', lb, 'ub', ub);
+
+        if isfield(info, 'dimension') && info.dimension ~= dim
+            error('CEC2013 dimension mismatch');
+        end
+        [range_groups, eval_used] = pipeline_rbf_rdg3_true_verify.run_pipeline_once(true);
+        groups = expand_range_groups(range_groups, dim);
+    catch ME
+        fprintf(2, '[WARN] Pipeline decomposition failed: %s\n', ME.message);
+        groups = {};
+        eval_used = 0;
+    end
+end
+
+function groups = split_group_by_size(base, max_group_size)
+    groups = {};
+    gi = 1;
+    n = numel(base);
+    for start = 1:max_group_size:n
+        stop = min(start + max_group_size - 1, n);
+        groups{gi} = base(start:stop);
+        gi = gi + 1;
+    end
+end
+
+function groups = split_dims_by_cr(Cr, dim, max_group_size)
+    max_group_size = max(1, int32(max_group_size));
+    if dim <= 0
+        groups = {};
+        return;
+    end
+    cr = reshape(Cr, 1, []);
+    if numel(cr) ~= dim
+        order = 1:dim;
+    else
+        cr(~isfinite(cr)) = 0;
+        [~, order] = sort(cr, 'descend');
+    end
+    groups = {};
+    gi = 1;
+    for start = 1:max_group_size:dim
+        stop = min(start + max_group_size - 1, dim);
+        group = order(start:stop);
+        if ~isempty(group)
+            groups{gi} = sort(group);
+            gi = gi + 1;
+        end
+    end
+end
+
+function Cr = compute_cr_from_DIG(X, y, k, rho)
+    if nargin < 3 || isempty(k)
+        k = 5;
+    end
+    if nargin < 4 || isempty(rho)
+        rho = 0.02;
+    end
+    [~, ~, I] = build_dependency_graph_knn(X, y, k, rho, 1e-12);
+    D = size(X,2);
+    if all(I(:) == 0)
+        Cr = ones(1, D) / D;
+        return;
+    end
+    abs_I = abs(I);
+    imp = sum(abs_I, 2);
+    s = sum(imp);
+    if s == 0
+        Cr = ones(1, D) / D;
+    else
+        Cr = (imp ./ s).';
+    end
+end
+
+function [edges, M, I] = build_dependency_graph_knn(X, y, k, rho, eps_val)
+    if nargin < 5 || isempty(eps_val)
+        eps_val = 1e-12;
+    end
+    [N, D] = size(X);
+    if N <= 1
+        edges = zeros(0, 2);
+        M = zeros(1, D);
+        I = zeros(D, D);
+        return;
+    end
+    k = min(k, N - 1);
+
+    if exist('pdist2', 'file') == 2
+        dists = pdist2(X, X);
+    else
+        dists = zeros(N, N);
+        for i = 1:N
+            diff = X - X(i,:);
+            dists(i,:) = sqrt(sum(diff.^2, 2));
+        end
+    end
+
+    [~, idx] = sort(dists, 2, 'ascend');
+
+    pair_mask = false(N, N);
+    for a = 1:N
+        for t = 2:(k+1)
+            b = idx(a, t);
+            if a < b
+                pair_mask(a, b) = true;
+            elseif b < a
+                pair_mask(b, a) = true;
             end
         end
     end
-    corr(i) = (nc - nd)/( n*(n-1)/2 );
-end
-Cr = abs(corr)/sum(abs(corr));
-end
-function y = Ens_predictor(X,Ens,Train,Xind,Mind,Sim)
 
-N = size(X,1);
-K = length(Ens);
-pre = zeros(N,K);
-for i = 1 : K
-    
-    S = Train{Mind(i)};
-    pre(:,i) = rbfpredict(Ens{i},S(:,1:end-1),X(:,Xind{Mind(i)}));
-end
-% y = mean(pre,2);
-sim = 1./Sim;
-w = sim(Mind(1:K))/sum(sim(Mind(1:K)));
-wpre = repmat(w,N,1) .* pre;
-y = sum(wpre,2);
+    [pa, pb] = find(triu(pair_mask, 1));
+
+    M = zeros(1, D);
+    I = zeros(D, D);
+    for p = 1:numel(pa)
+        a = pa(p);
+        b = pb(p);
+        dx = X(b,:) - X(a,:);
+        df = y(b) - y(a);
+        norm_val = sum(abs(dx)) + eps_val;
+        s = abs(dx) ./ norm_val;
+        w = abs(df);
+
+        M = M + w * s;
+
+        active = find(s > (1.0 / D));
+        for i_idx = 1:numel(active)
+            i = active(i_idx);
+            for j_idx = (i_idx + 1):numel(active)
+                j = active(j_idx);
+                val = w * s(i) * s(j);
+                I(i, j) = I(i, j) + val;
+                I(j, i) = I(j, i) + val;
+            end
+        end
+    end
+
+    scores = I(triu(true(D), 1));
+    if all(scores == 0)
+        edges = zeros(0, 2);
+        return;
+    end
+    threshold = quantile_linear(scores, 1 - rho);
+    [ei, ej] = find(triu(I, 1) >= threshold);
+    edges = [ei, ej];
 end
 
-% rng('shuffle');
-% k = randperm(length(Ens),1);
-% model = Ens{k};  xind = Xind{Mind(k)};
-% ldim = length(xind);  %������������ά�
-% train = Train{Mind(k)};
-% X = initialize_pop(N,dim,bu,bd); %��ʼ�����������ĳ�ʼ��ȺaX
-% Y = Ens_predictor(X,Ens,Train,Xind,Mind,Sim);
-% aX = initialize_pop(N,ldim,bu(:,xind),bd(:,xind)); %��ʼ�����������ĳ�ʼ��ȺaX
-% aY = rbfpredict(model,train(:,1:end-1),aX);
-% g = 0;
-% while g <= 500
-%     [Ens,Mind,Sim] = Selective_Ensemble(Model,Data0,Train,Test,K);  
-%     X1 = SBX(X,bu,bd,pc,N/2);
-%     X2 = mutation(X1(1:N/2,:),bu,bd,pm,N/2);
-%     aX1 = SBX(aX,bu(:,xind),bd(:,xind),pc,N/2);
-%     aX2 = mutation(aX1(1:N/2,:),bu(:,xind),bd(:,xind),pm,N/2);
-%     X3 = X2;  X3(:,xind) = aX2;
-%     X = [X;X2;X3];
-%     aX3 = X2(:,xind);
-%     aX = [aX;aX2;aX3];
-%     y = Ens_predictor([X2;X3],Ens,Train,Xind,Mind,Sim);
-%     ay = rbfpredict(model,train(:,1:end-1),[aX2;aX3]);
-%     Y = [Y;y];
-%     aY = [aY;ay];
-%     %     y = Ens_predictor([X2;X3],Ens,Train,Xind,Mind);
-%     %     Y = [Y;y];
-%     %     Y = Ens_predictor(X,Ens,Train,Xind,Mind);
-%     %     aY = rbfpredict(model,train(:,1:end-1),aX);
-%     [sY,is1] = sort(Y);  %��Ӧֵ���
-%     [saY,is2] = sort(aY);
-%     X = X(is1(1:N),:);  %ѡ��ǰN�
-%     Y = Y(is1(1:N),1);
-%     aX = aX(is2(1:N),:);
-%     aY = aY(is2(1:N),1);
-%     
-%     new = X(1,:);
-%     obj = compute_objective(new,dim,problem_name);
-%     Data = [Data;[new,obj]];
-%     g = g + 1;
-% end
-
+function qv = quantile_linear(data, q)
+    data = sort(data(:));
+    n = numel(data);
+    if n == 0
+        qv = NaN;
+        return;
+    end
+    if n == 1
+        qv = data(1);
+        return;
+    end
+    idx = (n - 1) * q;
+    lo = floor(idx);
+    hi = ceil(idx);
+    if lo == hi
+        qv = data(lo + 1);
+    else
+        w = idx - lo;
+        qv = data(lo + 1) * (1 - w) + data(hi + 1) * w;
+    end
+end
