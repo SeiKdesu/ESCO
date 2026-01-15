@@ -1,23 +1,23 @@
 function [X,Y] = Sur_Coevolution(Data,Ens,Train,Xind,Mind,Sim,bu,bd,N,gmax,W,B,C,P)
 
-dim = length(bu); %Î¬Ê
+dim = length(bu); %Î¬ï¿½
 g = 0;
 [~,ind] = sort(Data(:,end));
 S = Data(ind(1:ceil(N/2)),:);
-pc=1.0;  %Crossover Probability ½»²æ¸ÅÂÊ
-pm=1/dim;  %Mutation Probability ±äÒüüÅÂÊ
+pc=1.0;  %Crossover Probability ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+pm=1/dim;  %Mutation Probability ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 
 rng('shuffle');
 k = randperm(length(Ens),1);
 model = Ens{k};  xind = Xind{Mind(k)};
-ldim = length(xind);  %¸¨Öú×ÓËÑË÷µÄÎ¬Ê
+ldim = length(xind);  %ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Î¬ï¿½
 train = Train{Mind(k)};
 X = S(:,1:dim);  Y = S(:,dim+1);
 % aX = S(:,xind);  aY = S(:,dim+1);
-X0 = initialize_pop(N/2,dim,bu,bd); %³õÊ¼»¯Ö÷ËÑË÷³õÊ¼ÖÖÈºX
+X0 = initialize_pop(N/2,dim,bu,bd); %ï¿½ï¿½Ê¼ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ê¼ï¿½ï¿½ÈºX
 Y0 = Ens_predictor(X0,Ens,Train,Xind,Mind,Sim,W,B,C,P);
 X = [X;X0];  Y = [Y;Y0];
-aX = initialize_pop(N,ldim,bu(:,xind),bd(:,xind)); %³õÊ¼»¯¸¨ÖúËÑË÷µÄ³õÊ¼ÖÖÈºaX
+aX = initialize_pop(N,ldim,bu(:,xind),bd(:,xind)); %ï¿½ï¿½Ê¼ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ä³ï¿½Ê¼ï¿½ï¿½ÈºaX
 % aY = rbfpredict(model,train(:,1:end-1),aX);
 i = Mind(k);
 aY = RBF_predictor(W(i,:),B(i),C{i},P(:,i),aX);
@@ -30,7 +30,7 @@ while g <= gmax
 %     X2 = DE(X,Y,bu,bd,0.8,0.8,6);  % 6 --> DE/best/1/bin
 %     aX2 = DE(aX,aY,bu(:,xind),bd(:,xind),0.8,0.8,6);
     X3 = X2;
-    p_joint = 0.3;
+    p_joint = 0.7;
     if rand < p_joint && numel(Xind) >= 2
         % Joint update: combine two blocks and apply SBX on merged indices.
         joint_blocks = randperm(numel(Xind), 2);
@@ -54,9 +54,9 @@ while g <= gmax
 %     Y = [Y;y];
 %     Y = Ens_predictor(X,Ens,Train,Xind,Mind);
 %     aY = rbfpredict(model,train(:,1:end-1),aX);
-    [sY,is1] = sort(Y);  %ÊÊÓ¦ÖµÅÅÐ
+    [sY,is1] = sort(Y);  %ï¿½ï¿½Ó¦Öµï¿½ï¿½ï¿½
     [saY,is2] = sort(aY);
-    X = X(is1(1:N),:);  %Ñ¡ÔñÇ°N¸
+    X = X(is1(1:N),:);  %Ñ¡ï¿½ï¿½Ç°Nï¿½
     Y = Y(is1(1:N),1);
     aX = aX(is2(1:N),:);
     aY = aY(is2(1:N),1);
