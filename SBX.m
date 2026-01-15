@@ -1,5 +1,5 @@
-function [ NPOP ] = SBX( POP,bu,bd,pc,n )
-% Usage: [ NPOP ] = SBX( POP,bu,bd,pc,n )
+function [ NPOP, runtime ] = SBX( POP,bu,bd,pc,n )
+% Usage: [ NPOP, runtime ] = SBX( POP,bu,bd,pc,n )
 %
 % Input:
 % bu            -Upper Bound
@@ -10,6 +10,7 @@ function [ NPOP ] = SBX( POP,bu,bd,pc,n )
 %
 % Output: 
 % NPOP          -Output Population with 2n Solutions
+% runtime       -Execution time (seconds)
 %
     %%%%    Authors:    Handing Wang, Yaochu Jin, Chaoli Sun, John Doherty
     %%%%    University of Surrey, UK and Taiyuan University of Science and Technology, China.
@@ -23,6 +24,7 @@ function [ NPOP ] = SBX( POP,bu,bd,pc,n )
 
 %You are free to use it for non-commercial purposes. However, we do not offer any forms of guanrantee or warranty associated with the code. We would appreciate your acknowledgement.
 %------------------------------------------------------------------------
+t_start = tic;
 NPOP=[];
 eta_c=15;
 N=size(POP,1); %种群大小
@@ -84,5 +86,6 @@ for i=1:n
     end
     
 end
+runtime = toc(t_start);
 end
 
